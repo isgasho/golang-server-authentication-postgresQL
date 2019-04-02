@@ -10,6 +10,7 @@ import (
    "./database"
 	"github.com/gorilla/mux"
 	"./token"
+	"github.com/gorilla/context"
 )
 
 type message struct {
@@ -23,7 +24,7 @@ const secret string = "dasgasdgsd"
 
 func main() {
 	r := mux.NewRouter()
-	r.HandleFunc("/", defaultHandler).Methods("GET")
+	r.HandleFunc("/", token.AuthMiddleware(defaultHandler)).Methods("GET")
 	r.HandleFunc("/signup", signUpHandler).Methods("POST")
 	r.HandleFunc("/users", getUserHandler).Methods("GET")
 	r.HandleFunc("/login", loginHandler).Methods("POST")
@@ -38,6 +39,8 @@ func main() {
 
 func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	decoded := context.Get(r, "decoded")
+	fmt.Println(decoded)
 	w.WriteHeader(http.StatusOK)
 	m := message{
 		Message: "just health check",
@@ -153,3 +156,6 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	}
 }
+
+
+
