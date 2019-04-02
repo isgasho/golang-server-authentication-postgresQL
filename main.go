@@ -6,39 +6,15 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-
-	"golang.org/x/crypto/bcrypt"
-
-	"github.com/dgrijalva/jwt-go"
+   "./signup"
+   "./database"
 	"github.com/gorilla/mux"
-	"github.com/lib/pq"
+	"./token"
 )
 
 type message struct {
 	Message string `json:"message"`
 }
-
-type signup struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-func (s *signup) hashPassword() (string, error) {
-	by, err := bcrypt.GenerateFromPassword([]byte(s.Password), bcrypt.MinCost)
-	if err != nil {
-		return "", err
-	}
-	return string(by), nil
-}
-
-func comparePassword(hp, p string) (bool, error) {
-	err := bcrypt.CompareHashAndPassword([]byte(hp), []byte(p))
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 var db *sql.DB
 
 type userId int
@@ -52,23 +28,11 @@ func main() {
 	r.HandleFunc("/users", getUserHandler).Methods("GET")
 	r.HandleFunc("/login", loginHandler).Methods("POST")
 
-	pgURL, err := pq.ParseURL("postgres://ogsbeoli:iUZvt7Teld42B8vAlDGTRjzdAVu7fZF9@isilo.db.elephantsql.com:5432/ogsbeoli")
-	if err != nil {
-		fmt.Println("was not able to connect to the database")
+	d, err := database.InitialDatabase("postgres://ogsbeoli:iUZvt7Teld42B8vAlDGTRjzdAVu7fZF9@isilo.db.elephantsql.com:5432/ogsbeoli")
+	if err != nil{
 		return
 	}
-	db, err = sql.Open("postgres", pgURL)
-	if err != nil {
-		fmt.Println("was not able to connect to the database")
-		return
-	}
-
-	err = db.Ping()
-	if err != nil {
-		fmt.Println("ping did not work")
-		return
-	}
-
+	db = d
 	log.Fatal(http.ListenAndServe(":7000", r))
 }
 
@@ -82,7 +46,7 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func signUpHandler(w http.ResponseWriter, r *http.Request) {
-	signupForm := signup{}
+	signupForm := signup.Signup{}
 	var uID userId
 	err := json.NewDecoder(r.Body).Decode(&signupForm)
 	if err != nil {
@@ -90,7 +54,7 @@ func signUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//hash password
-	s, err := signupForm.hashPassword()
+	s, err := signupForm.HashPassword()
 	if err != nil {
 		http.Error(w, "was not able to hash your password", http.StatusBadRequest)
 		return
@@ -105,12 +69,7 @@ func signUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"email":    signupForm.Email,
-		"password": s,
-	})
-
-	tokenString, err := token.SignedString([]byte(secret))
+	tokenString, err := token.CreateToken(signupForm.Email, s)
 
 	if err != nil {
 		http.Error(w, "was not able to generate a token for you fucker", http.StatusBadRequest)
@@ -125,8 +84,8 @@ func signUpHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getUserHandler(w http.ResponseWriter, r *http.Request) {
-	var s []signup
-	c := make(chan signup)
+	var s []signup.Signup
+	c := make(chan signup.Signup)
 	rows, err := db.Query("SELECT * FROM USERS")
 	if err != nil {
 		http.Error(w, "was not able to fetch data from the database", http.StatusBadRequest)
@@ -145,7 +104,7 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "was not able to scan it", http.StatusBadRequest)
 				return
 			}
-			sForm := signup{
+			sForm := signup.Signup{
 				Email:    email,
 				Password: password,
 			}
@@ -161,32 +120,26 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
-	s := signup{}
+	s := signup.Signup{}
 	err := json.NewDecoder(r.Body).Decode(&s)
 	if err != nil {
 		http.Error(w, "body was not included fucker", http.StatusBadRequest)
 	}
 	rows := db.QueryRow("SELECT * FROM USERS WHERE id=$1", 5)
-	sD := signup{}
+	sD := signup.Signup{}
 	var ID int
 	err = rows.Scan(&ID, &sD.Email, &sD.Password)
 	if err != nil {
 		http.Error(w, "Was not able to scan it", http.StatusBadRequest)
 		return
 	}
-	ok, err := comparePassword(sD.Password, s.Password)
+	ok, err := s.ComparePassword(sD.Password, s.Password)
 	if err != nil {
 		http.Error(w, "password does not match", http.StatusBadRequest)
 		return
 	}
 	if ok {
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"email":    s.Email,
-			"password": sD.Password,
-		})
-
-		tokenString, err := token.SignedString([]byte(secret))
-
+		tokenString, err := token.CreateToken(s.Email, sD.Password)
 		if err != nil {
 			http.Error(w, "was not able to generate a token", http.StatusBadRequest)
 			return
